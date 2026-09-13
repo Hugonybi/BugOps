@@ -82,7 +82,18 @@ class SentryMCPClient:
             client_metadata=OAuthClientMetadata(
                 client_name=client_name,
                 redirect_uris=[AnyUrl(redirect_uri)],
-                scope="org:read project:read event:read",
+                # Sentry's MCP server grants access by "skill" (a bundle of tools), not
+                # arbitrary REST-style scopes — get_issue_details/get_event_stacktrace/
+                # get_issue_breadcrumbs all live under "inspect". An unrecognized scope
+                # string here silently grants nothing, which is why those tools 404'd.
+                scope="inspect",
+                # BugOps is a local script with nowhere safe to keep a client secret, so it
+                # must register as a public (PKCE-only) client. Left unset, the SDK defaults
+                # to requesting client_secret_basic, which made Sentry issue a confidential
+                # client and then reject the token exchange for sending both a client secret
+                # and a PKCE code_verifier ("Client must not use multiple authentication
+                # methods").
+                token_endpoint_auth_method="none",
             ),
             storage=FileTokenStorage(token_cache_path),
             redirect_handler=_print_redirect_url,
@@ -90,10 +101,18 @@ class SentryMCPClient:
         )
 
     async def _call(self, tool_name: str, arguments: dict) -> tuple[dict | None, str | None]:
+        """Calls a catalog tool via execute_sentry_tool.
+
+        The deployed server doesn't expose the full catalog (get_issue_details, etc.) as
+        directly callable top-level tools — tools/list only returns a handful of entry points
+        plus search_sentry_tools/execute_sentry_tool, which virtualize the rest. Confirmed by
+        inspecting the live session's tools/list output and execute-tool.ts's dispatch
+        contract: execute_sentry_tool(name, arguments) -> the target tool's own result.
+        """
         async with httpx2.AsyncClient(auth=self._oauth, timeout=30.0) as http_client:
             transport = streamable_http_client(self._server_url, http_client=http_client)
             async with Client(transport) as client:
-                result = await client.call_tool(tool_name, arguments)
+                result = await client.call_tool("execute_sentry_tool", {"name": tool_name, "arguments": arguments})
         if result.is_error:
             text = _first_text(result.content)
             raise RuntimeError(f"Sentry MCP tool {tool_name!r} failed: {text}")

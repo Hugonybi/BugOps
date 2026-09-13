@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import re
 from urllib.parse import urlparse
 
 from pydantic import BaseModel
+
+# Matches the issue id segment right after "/issues/", ignoring anything after it (e.g. a
+# trailing "/events/<event_id>/" when the URL was copied from a specific event's permalink).
+# Sentry issue ids in the URL are either numeric ("141205107") or a short id ("PROJECT-1Z43").
+_ISSUE_ID_RE = re.compile(r"/issues/([^/]+)")
 
 
 class IssueRef(BaseModel):
@@ -18,12 +24,16 @@ class IssueRef(BaseModel):
 
 
 def parse_issue_url(issue_url: str) -> IssueRef:
-    """Parses a Sentry issue URL, e.g. https://my-org.sentry.io/issues/PROJECT-1Z43."""
+    """Parses a Sentry issue URL. Handles both a bare issue URL
+    (https://my-org.sentry.io/issues/PROJECT-1Z43) and a specific-event permalink
+    (https://my-org.sentry.io/issues/141205107/events/<event_id>/) — only the issue id
+    matters here, so anything after it in the path is ignored."""
     parsed = urlparse(issue_url)
     org_slug = parsed.hostname.split(".")[0] if parsed.hostname else ""
-    short_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    match = _ISSUE_ID_RE.search(parsed.path)
+    short_id = match.group(1) if match else ""
     if not org_slug or not short_id:
-        raise ValueError(f"Could not parse org slug / issue short id from {issue_url!r}")
+        raise ValueError(f"Could not parse org slug / issue id from {issue_url!r}")
     return IssueRef(org_slug=org_slug, short_id=short_id.upper(), issue_url=issue_url)
 
 
