@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from git import Repo as GitRepo
 
+from bugops import reliability
 from bugops.clients.github_client import GitHubClient
 from bugops.config import Settings
 from bugops.git import branch_ops, local_repo, worktree
@@ -69,7 +70,9 @@ def _run_sync(state: BugOpsState, settings: Settings, gh: GitHubClient, approve:
     if state.get("route_decision") != "suggest_pr" or not settings.enable_pr_creation:
         return {}
 
-    if not settings.pr_auto_approve and not approve(state):
+    reliability.reconcile(settings, gh)
+    auto_approved = settings.pr_auto_approve or reliability.is_reliable(settings, state["risk_category"])
+    if not auto_approved and not approve(state):
         logger.info("open_pr_declined", issue=state["issue"].short_id)
         return {"errors": ["open_pr_declined"]}
 
@@ -102,7 +105,7 @@ def _run_sync(state: BugOpsState, settings: Settings, gh: GitHubClient, approve:
             return {"errors": [f"open_pr_push_failed: {push_error}"]}
 
         try:
-            pr_url = gh.create_pull_request(
+            created = gh.create_pull_request(
                 repo["owner"],
                 repo["name"],
                 title=_pr_title(state),
@@ -115,8 +118,15 @@ def _run_sync(state: BugOpsState, settings: Settings, gh: GitHubClient, approve:
             logger.warning("open_pr_github_api_failed", error=str(exc))
             return {"errors": [f"open_pr_github_api_failed: {exc}"]}
 
-        logger.info("open_pr_created", pr_url=pr_url, branch=branch_name)
-        return {"pr_url": pr_url}
+        reliability.record_pending(
+            settings,
+            repo=f"{repo['owner']}/{repo['name']}",
+            pr_number=created.number,
+            pr_url=created.url,
+            risk_category=state["risk_category"],
+        )
+        logger.info("open_pr_created", pr_url=created.url, branch=branch_name)
+        return {"pr_url": created.url}
     finally:
         worktree.remove_worktree(local, dest)
 

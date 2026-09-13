@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from github import Github
 from github.GithubException import GithubException
+
+
+@dataclass
+class CreatedPullRequest:
+    url: str
+    number: int
 
 
 class GitHubClient:
@@ -45,10 +53,17 @@ class GitHubClient:
 
     def create_pull_request(
         self, owner: str, name: str, *, title: str, body: str, head: str, base: str, draft: bool = True
-    ) -> str:
+    ) -> CreatedPullRequest:
         """Opens a PR from an already-pushed `head` branch. Raises GithubException on failure —
         unlike pr_url_for_commit's best-effort lookup, open_pr needs to tell "PR creation failed"
         apart from "no PR exists", which only works if this propagates the error."""
         repo = self.get_repo(owner, name)
         pr = repo.create_pull(title=title, body=body, head=head, base=base, draft=draft)
-        return pr.html_url
+        return CreatedPullRequest(url=pr.html_url, number=pr.number)
+
+    def pr_state(self, owner: str, name: str, number: int) -> Literal["open", "merged", "closed"]:
+        """Used by the reliability outcome store to reconcile a previously-opened PR's fate."""
+        pr = self.get_repo(owner, name).get_pull(number)
+        if pr.merged:
+            return "merged"
+        return pr.state

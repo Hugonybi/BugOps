@@ -85,6 +85,22 @@ class Settings(BaseSettings):
     approved. Off by default so a run never opens a PR without a human saying so; run_pipeline.py
     exposes --yes to flip this per-invocation without editing .env."""
 
+    pr_outcome_store_path: Path = Path("data/pr_outcomes.json")
+    """Where the reliability module records each opened PR's risk_category and eventual fate
+    (merged/closed), and reconciles still-pending ones against GitHub on every open_pr run."""
+
+    reliability_min_sample_size: int = 8
+    """Minimum resolved (merged+closed) PRs a risk_category needs before it can be trusted to
+    auto-approve — below this, is_reliable always returns False regardless of merge rate."""
+
+    reliability_merge_rate_threshold: float = 0.85
+    """Minimum merged/(merged+closed) fraction, once reliability_min_sample_size is met, for a
+    risk_category to skip open_pr's manual approval prompt."""
+
+    enable_reliability_auto_approve: bool = True
+    """Feature flag for the reliability policy above. False preserves Phase 5 behavior exactly:
+    the manual gate always shows unless pr_auto_approve is set."""
+
     def repo_map(self) -> dict[str, str]:
         import json
 

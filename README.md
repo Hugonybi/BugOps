@@ -2,9 +2,11 @@
 
 BugOps is an autonomous bug-fixing agent for Sentry issues in a handful of Node/TypeScript repos. It's built as a LangGraph state machine: given a Sentry issue, it gathers context (stack trace, blame, commit history), uses an LLM to hypothesize a root cause, generates and tests a fix in a sandboxed clone, and either opens a draft PR or posts a structured comment + Slack notification depending on a deterministic confidence/risk gate.
 
-## Status: Phase 5 of 6
+## Status: Phase 6 of 6
 
-The project is being built in stages (see build order below). **Phases 1-5** are implemented so far: BugOps now runs as a real LangGraph `StateGraph` (`ingest -> gather_context -> investigate -> generate_fix -> test_fix`, looping back to `generate_fix` on a failed test up to a retry cap) that gathers context on a historical Sentry issue, asks an LLM to propose ranked root-cause hypotheses, generates a candidate diff, and verifies it against the repo's real test suite in a sandboxed Docker container, then runs a deterministic confidence/risk decision gate. When the gate's route is eligible for a PR, the CLI shows a summary and asks for interactive approval before `open_pr` pushes a branch and opens a **draft** PR; either way, `notify_slack` posts a Slack message summarizing the outcome (a suggested fix — with the PR link if one was opened — or why it could not fix it). No live webhook integration yet — approval and PR creation both happen within a single `run_pipeline.py` invocation.
+The project is being built in stages (see build order below). **All 6 phases** are implemented: BugOps now runs as a real LangGraph `StateGraph` (`ingest -> gather_context -> investigate -> generate_fix -> test_fix`, looping back to `generate_fix` on a failed test up to a retry cap) that gathers context on a historical Sentry issue, asks an LLM to propose ranked root-cause hypotheses, generates a candidate diff, and verifies it against the repo's real test suite in a sandboxed Docker container, then runs a deterministic confidence/risk decision gate. When the gate's route is eligible for a PR, `open_pr` first reconciles any previously-opened PRs' outcomes against GitHub, then skips the interactive approval prompt if that risk category has proven reliable (see below) — otherwise the CLI shows a summary and asks for approval, same as before — before pushing a branch and opening a **draft** PR. Either way, `notify_slack` posts a Slack message summarizing the outcome (a suggested fix — with the PR link if one was opened — or why it could not fix it). No live webhook integration yet — everything happens within a single `run_pipeline.py` invocation.
+
+**Reliability-based auto-approval (Phase 6):** every PR `open_pr` opens is recorded (`data/pr_outcomes.json` by default) with its `risk_category` and a `"pending"` status. On each subsequent run, before deciding whether to prompt for approval, `open_pr` reconciles pending records against GitHub (merged/closed/still open) and computes, per `risk_category`, the merge rate among resolved PRs. Once a category has at least `RELIABILITY_MIN_SAMPLE_SIZE` resolved PRs and a merge rate at or above `RELIABILITY_MERGE_RATE_THRESHOLD`, the manual gate is skipped for future PRs in that category — the same effect as `PR_AUTO_APPROVE`, but earned per risk category from real outcomes instead of a blanket human override. Set `ENABLE_RELIABILITY_AUTO_APPROVE=false` to keep the manual gate always on.
 
 What the pipeline does, given a Sentry issue URL:
 
@@ -18,14 +20,14 @@ What the pipeline does, given a Sentry issue URL:
 - Posts a Slack message summarizing the result — the PR link if one was opened, why it wasn't, or the comment-only outcome (`SLACK_BOT_TOKEN`/`SLACK_DEFAULT_CHANNEL`, optional — skipped cleanly if unset)
 - Prints a human-readable report (and optionally dumps JSON) so the output can be checked against what Sentry's own UI shows for the same issue
 
-Roadmap for the remaining phases:
+Roadmap:
 
 1. ~~Ingest + gather context~~ (done)
 2. ~~Hypothesize + investigate (LLM tool-use loop over the gathered context)~~ (done)
 3. ~~Generate fix + test fix (sandboxed Docker test runs, bounded retries)~~ (done)
 4. ~~Decision gate + comment-only + Slack notification (suggest-only path ships first)~~ (done)
 5. ~~Open PR, gated behind manual approval~~ (done)
-6. Remove the manual gate for risk categories that prove reliable over time
+6. ~~Remove the manual gate for risk categories that prove reliable over time~~ (done)
 
 ## Setup
 
@@ -41,6 +43,7 @@ Roadmap for the remaining phases:
    - `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` — which LLM the investigate step uses; any provider `langchain` has an integration package for (defaults to Anthropic)
    - `SLACK_BOT_TOKEN` / `SLACK_DEFAULT_CHANNEL` — optional; leave blank to skip Slack notifications (the decision gate still runs, `notify_slack` just won't post)
    - `ENABLE_PR_CREATION` / `PR_DRAFT` / `PR_BRANCH_PREFIX` — optional; default to opening a draft PR under a `bugops/` branch prefix when the decision gate routes to `suggest_pr`. Set `ENABLE_PR_CREATION=false` to disable `open_pr` entirely (it still self-guards cleanly, same as `ENABLE_SANDBOX_TESTS`/`ENABLE_SLACK_NOTIFY`)
+   - `PR_OUTCOME_STORE_PATH` / `RELIABILITY_MIN_SAMPLE_SIZE` / `RELIABILITY_MERGE_RATE_THRESHOLD` / `ENABLE_RELIABILITY_AUTO_APPROVE` — optional tuning knobs for the Phase 6 reliability policy; defaults are reasonable to start with no history
 3. No Sentry credentials to configure up front — the first run triggers a one-time interactive OAuth authorization (see below).
 4. Have Docker (e.g. Docker Desktop) installed and running — `test_fix` runs the target repo's test suite in a container. Set `ENABLE_SANDBOX_TESTS=false` to skip that step on a machine without Docker.
 
@@ -77,6 +80,7 @@ src/bugops/
   config.py           # settings (env vars)
   state.py             # BugOpsState — the full graph state schema (only a subset populated so far)
   diffutils.py          # shared diff-header parsing, used by generate_fix.py and decision_gate.py (Phase 4)
+  reliability.py        # PR outcome store + merge-rate policy behind open_pr's auto-approval (Phase 6)
   graph.py              # StateGraph wiring ingest -> ... -> test_fix -> {generate_fix | decision_gate} -> open_pr -> notify_slack (Phase 5)
   nodes/
     ingest.py           # Sentry issue -> initial state (Phase 1)
@@ -85,12 +89,12 @@ src/bugops/
     generate_fix.py       # LLM proposes a unified diff from the ranked hypotheses (Phase 3)
     test_fix.py            # applies the diff in a sandboxed worktree + runs tests via Docker (Phase 3)
     decision_gate.py         # deterministic confidence/risk routing, no LLM (Phase 4)
-    open_pr.py                 # interactive approval + pushes a branch and opens a draft PR (Phase 5)
+    open_pr.py                 # interactive approval (or reliability auto-approval) + pushes a branch and opens a draft PR (Phase 5-6)
     notify_slack.py            # posts a Slack summary of the outcome, incl. the PR link (Phase 4-5)
     tools.py                     # shared read_source_file tool + context-message builder
   clients/
     sentry_mcp.py        # Sentry hosted MCP client (OAuth)
-    github_client.py     # GitHub REST (PyGithub) — read calls plus create_pull_request (Phase 5)
+    github_client.py     # GitHub REST (PyGithub) — read calls, create_pull_request, pr_state (Phase 5-6)
     slack_client.py        # Slack Web API wrapper (chat.postMessage) (Phase 4)
   git/
     local_repo.py         # local clone, blame, commit log (GitPython)
