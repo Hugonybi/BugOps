@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings>=2.15.0",
     "pygithub>=2.10.0",
     "rich>=15.0.0",
+    "slack-sdk>=3.31.0",
     "structlog>=26.1.0",
     "tenacity>=9.1.4",
 ]

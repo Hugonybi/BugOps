@@ -68,6 +68,10 @@ class FakeSettings:
     sandbox_worktree_dir = Path("unused-worktrees")
     enable_sandbox_tests = True
     repo_test_cmd_map_json = "{}"
+    decision_confidence_floor = 0.75
+    decision_max_files_for_low_risk = 2
+    enable_slack_notify = True
+    slack_default_channel = "#bugops"
 
     def repo_map(self):
         import json
@@ -122,6 +126,16 @@ class FakeDockerRunner:
         if self._results:
             return self._results.pop(0)
         return SandboxResult(passed=True, command=test_command, stdout_tail="ok", stderr_tail="", duration_s=0.1)
+
+
+class FakeSlackClient:
+    def __init__(self, ts="171234.5678"):
+        self._ts = ts
+        self.calls = []
+
+    def post_message(self, channel, text):
+        self.calls.append((channel, text))
+        return self._ts
 
 
 @pytest.fixture(autouse=True)
@@ -192,8 +206,9 @@ async def test_graph_runs_ingest_through_investigate():
     gh = FakeGitHubClient()
     model = FakeModel(_conclusion(), fix_output=_fix_output())
     docker_runner = FakeDockerRunner()
+    slack_client = FakeSlackClient()
 
-    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner)
+    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )
@@ -211,8 +226,9 @@ async def test_graph_generates_and_tests_a_passing_fix():
     docker_runner = FakeDockerRunner(
         results=[SandboxResult(passed=True, command="npm test", stdout_tail="ok", stderr_tail="", duration_s=0.5)]
     )
+    slack_client = FakeSlackClient()
 
-    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner)
+    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )
@@ -220,6 +236,10 @@ async def test_graph_generates_and_tests_a_passing_fix():
     assert state["current_diff"] == DIFF
     assert state["test_attempts"][-1]["passed"] is True
     assert "drop_reason" not in state
+    assert state["confidence"] == 0.7
+    assert state["risk_category"] == "low"
+    assert state["route_decision"] in ("auto_pr", "comment_only")
+    assert state["slack_thread_ts"] == "171234.5678"
 
 
 @pytest.mark.asyncio
@@ -235,8 +255,9 @@ async def test_graph_retries_generate_fix_until_max_retries_then_stops():
             SandboxResult(passed=False, command="npm test", stdout_tail="", stderr_tail="fail 2", duration_s=0.1),
         ]
     )
+    slack_client = FakeSlackClient()
 
-    graph = build_graph(settings, mcp, gh, model=model, docker_runner=docker_runner)
+    graph = build_graph(settings, mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )
@@ -245,3 +266,6 @@ async def test_graph_retries_generate_fix_until_max_retries_then_stops():
     assert len(state["test_attempts"]) == 2
     assert state["drop_reason"] == "max_fix_retries_exhausted"
     assert state["current_diff"] == DIFF
+    assert state["risk_category"] == "high"
+    assert state["route_decision"] == "comment_only"
+    assert state["slack_thread_ts"] == "171234.5678"

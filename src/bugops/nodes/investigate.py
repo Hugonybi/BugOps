@@ -33,6 +33,7 @@ async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> B
 
     while round_no < settings.max_investigate_rounds:
         round_no += 1
+        logger.info("investigate_round_start", round=round_no, max_rounds=settings.max_investigate_rounds)
         response = await bound_model.ainvoke(messages)
         messages.append(response)
 
@@ -44,6 +45,7 @@ async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> B
             result = read_tool.invoke(call["args"])
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
 
+    logger.info("investigate_requesting_conclusion", rounds_used=round_no)
     try:
         structured_model = model.with_structured_output(InvestigationConclusion)
         conclusion = await structured_model.ainvoke(

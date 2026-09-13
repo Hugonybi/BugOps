@@ -52,6 +52,22 @@ class Settings(BaseSettings):
     enable_sandbox_tests: bool = True
     """Feature flag to skip test_fix entirely (e.g. on a machine without Docker)."""
 
+    decision_confidence_floor: float = 0.75
+    """Minimum decision_gate `confidence` (from the top hypothesis) required for route_decision
+    to ever be "auto_pr" — below this it is always "comment_only"."""
+
+    decision_max_files_for_low_risk: int = 2
+    """A diff touching more files than this bumps risk_category above "low" even with high
+    confidence and a passing test."""
+
+    enable_slack_notify: bool = True
+    """Feature flag to skip the actual Slack API call (e.g. no SLACK_BOT_TOKEN on this machine).
+    decision_gate still runs and notify_slack still returns cleanly; only the network call is
+    skipped, and this is never recorded as a drop_reason."""
+
+    slack_bot_token: SecretStr | None = None
+    slack_default_channel: str | None = None
+
     def repo_map(self) -> dict[str, str]:
         import json
 

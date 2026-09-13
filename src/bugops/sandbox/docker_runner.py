@@ -44,6 +44,9 @@ class DockerTestRunner:
             raise DockerUnavailableError(result.stderr.decode("utf-8", errors="replace"))
 
     def run(self, worktree_path: Path, install_command: str, test_command: str) -> SandboxResult:
+        logger.info(
+            "docker_install_start", command=install_command, timeout_s=self._settings.sandbox_install_timeout_s
+        )
         install_result = self._run_in_container(
             worktree_path, install_command, network_disabled=False, timeout=self._settings.sandbox_install_timeout_s
         )
@@ -64,6 +67,7 @@ class DockerTestRunner:
                 duration_s=0.0,
             )
 
+        logger.info("docker_test_start", command=test_command, timeout_s=self._settings.sandbox_test_timeout_s)
         start = time.monotonic()
         test_result = self._run_in_container(
             worktree_path, test_command, network_disabled=True, timeout=self._settings.sandbox_test_timeout_s

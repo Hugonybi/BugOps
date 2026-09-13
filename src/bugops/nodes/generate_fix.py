@@ -4,6 +4,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from bugops.config import Settings
+from bugops.diffutils import diff_paths
 from bugops.git import local_repo
 from bugops.logging import get_logger
 from bugops.models.fix import FixOutput
@@ -53,17 +54,6 @@ def _valid_paths(files_touched: list[str]) -> bool:
     return True
 
 
-def _diff_paths(diff: str) -> list[str]:
-    paths = []
-    for line in diff.splitlines():
-        if line.startswith("diff --git a/"):
-            # "diff --git a/<path> b/<path>"
-            rest = line[len("diff --git a/") :]
-            a_path = rest.split(" b/", 1)[0]
-            paths.append(a_path)
-    return paths
-
-
 async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> BugOpsState:
     repo = state["repo"]
     local = local_repo.ensure_clone(
@@ -82,6 +72,7 @@ async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> B
 
     while round_no < settings.max_investigate_rounds:
         round_no += 1
+        logger.info("generate_fix_round_start", round=round_no, max_rounds=settings.max_investigate_rounds)
         response = await bound_model.ainvoke(messages)
         messages.append(response)
 
@@ -92,6 +83,7 @@ async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> B
             result = read_tool.invoke(call["args"])
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
 
+    logger.info("generate_fix_requesting_diff", rounds_used=round_no)
     try:
         structured_model = model.with_structured_output(FixOutput)
         fix = await structured_model.ainvoke(messages + [HumanMessage(content="Give your final diff now.")])
@@ -99,12 +91,12 @@ async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> B
         logger.warning("generate_fix_structured_output_failed", error=str(exc))
         return {"errors": [f"generate_fix: structured output failed: {exc}"]}
 
-    diff_paths = _diff_paths(fix.diff)
-    if not _valid_paths(fix.files_touched) or not _valid_paths(diff_paths):
-        logger.warning("generate_fix_rejected_paths", files_touched=fix.files_touched, diff_paths=diff_paths)
+    diff_paths_ = diff_paths(fix.diff)
+    if not _valid_paths(fix.files_touched) or not _valid_paths(diff_paths_):
+        logger.warning("generate_fix_rejected_paths", files_touched=fix.files_touched, diff_paths=diff_paths_)
         return {"errors": ["generate_fix: rejected diff touching disallowed paths"]}
-    if set(diff_paths) != set(fix.files_touched):
-        logger.warning("generate_fix_diff_files_mismatch", files_touched=fix.files_touched, diff_paths=diff_paths)
+    if set(diff_paths_) != set(fix.files_touched):
+        logger.warning("generate_fix_diff_files_mismatch", files_touched=fix.files_touched, diff_paths=diff_paths_)
         return {"errors": ["generate_fix: files_touched does not match diff headers"]}
 
     return {"current_diff": fix.diff, "diff_history": [fix.diff]}

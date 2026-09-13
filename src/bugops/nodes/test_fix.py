@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 
 def _run_sync(state: BugOpsState, settings: Settings, docker_runner: DockerTestRunner) -> BugOpsState:
     retry_count = state.get("retry_count", 0) + 1
+    logger.info("test_fix_attempt_start", attempt=retry_count, max_attempts=settings.max_fix_retries)
 
     if not settings.enable_sandbox_tests:
         return {"retry_count": retry_count, "drop_reason": "sandbox_tests_disabled"}

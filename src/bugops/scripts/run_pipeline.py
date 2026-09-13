@@ -106,6 +106,16 @@ def _render(state: BugOpsState) -> None:
     if state.get("drop_reason"):
         console.print(f"\n[yellow]drop_reason: {state['drop_reason']}[/yellow]")
 
+    if state.get("route_decision"):
+        console.print(
+            f"\n[bold]decision_gate:[/bold] confidence={state.get('confidence'):.2f}  "
+            f"risk={state.get('risk_category')}  route={state.get('route_decision')}"
+        )
+    if state.get("slack_thread_ts"):
+        console.print(f"[bold]slack:[/bold] posted (ts={state['slack_thread_ts']})")
+    elif state.get("route_decision"):
+        console.print("[dim]slack: not posted (disabled or unconfigured)[/dim]")
+
 
 async def _main(args: argparse.Namespace) -> None:
     configure_logging()
@@ -132,8 +142,8 @@ async def _main(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Run the ingest -> gather_context -> investigate -> generate_fix -> test_fix graph "
-            "against a real historical Sentry issue."
+            "Run the ingest -> gather_context -> investigate -> generate_fix -> test_fix -> "
+            "decision_gate -> notify_slack graph against a real historical Sentry issue."
         )
     )
     parser.add_argument("--issue-url", required=True, help="e.g. https://my-org.sentry.io/issues/PROJECT-1Z43")
