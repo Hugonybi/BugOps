@@ -31,6 +31,7 @@ class TestResult(TypedDict):
 class BugOpsState(TypedDict, total=False):
     # --- ingest (phase 1) ---
     issue_url: str
+    project_slug_override: str | None
     org_slug: str
     issue_short_id: str
     issue: SentryIssueSummary

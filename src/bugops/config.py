@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     max_context_frames: int = 15
     """Cap on how many in-app stack frames gather_context fetches source/blame for."""
 
+    llm_provider: str = "anthropic"
+    """Passed to langchain's init_chat_model as model_provider — switching models/providers
+    is a config change, never a code change."""
+    llm_model: str
+    llm_api_key: SecretStr
+    llm_base_url: str | None = None
+    """Only needed for a self-hosted or OpenAI-compatible endpoint; omitted otherwise."""
+
+    max_investigate_rounds: int = 4
+    """Cap on investigate's agent<->tool loop iterations before it force-terminates."""
+
     def repo_map(self) -> dict[str, str]:
         import json
 

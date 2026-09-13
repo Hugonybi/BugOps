@@ -15,8 +15,8 @@ from rich.table import Table
 from bugops.clients.github_client import GitHubClient
 from bugops.clients.sentry_mcp import SentryMCPClient
 from bugops.config import load_settings
+from bugops.graph import build_graph
 from bugops.logging import configure_logging
-from bugops.nodes import gather_context, ingest
 from bugops.state import BugOpsState
 
 console = Console()
@@ -82,6 +82,14 @@ def _render(state: BugOpsState) -> None:
                 table.add_row(c.sha[:8], c.author, c.date, c.message, c.pr_url or "")
             console.print(table)
 
+    for h in state.get("hypotheses", []):
+        console.print(
+            Panel(
+                f"{h['summary']}\nfiles: {', '.join(h['suspected_files'])}\nreasoning: {h['reasoning']}",
+                title=f"Hypothesis (confidence {h['confidence']:.2f})",
+            )
+        )
+
 
 async def _main(args: argparse.Namespace) -> None:
     configure_logging()
@@ -94,8 +102,8 @@ async def _main(args: argparse.Namespace) -> None:
     )
     gh = GitHubClient(settings.github_token.get_secret_value())
 
-    state = await ingest.from_issue_url(args.issue_url, settings, mcp, gh, project_slug_override=args.project_slug)
-    state = await gather_context.run(state, settings, mcp, gh)
+    graph = build_graph(settings, mcp, gh)
+    state = await graph.ainvoke({"issue_url": args.issue_url, "project_slug_override": args.project_slug})
 
     _render(state)
 
@@ -106,7 +114,9 @@ async def _main(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run ingest+gather_context against a real historical Sentry issue.")
+    parser = argparse.ArgumentParser(
+        description="Run the ingest -> gather_context -> investigate graph against a real historical Sentry issue."
+    )
     parser.add_argument("--issue-url", required=True, help="e.g. https://my-org.sentry.io/issues/PROJECT-1Z43")
     parser.add_argument("--project-slug", default=None, help="Override if Sentry doesn't return one in structured output")
     parser.add_argument("--json-out", type=Path, default=None)

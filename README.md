@@ -2,21 +2,22 @@
 
 BugOps is an autonomous bug-fixing agent for Sentry issues in a handful of Node/TypeScript repos. It's built as a LangGraph state machine: given a Sentry issue, it gathers context (stack trace, blame, commit history), uses an LLM to hypothesize a root cause, generates and tests a fix in a sandboxed clone, and either opens a draft PR or posts a structured comment + Slack notification depending on a deterministic confidence/risk gate.
 
-## Status: Phase 1 of 6
+## Status: Phase 2 of 6
 
-The project is being built in stages (see build order below). Only **Phase 1** is implemented so far: proving out the Sentry + GitHub context-gathering pipeline against real historical issues, with no LLM, no live webhook, and no LangGraph graph yet.
+The project is being built in stages (see build order below). **Phase 1 and 2** are implemented so far: BugOps now runs as a real LangGraph `StateGraph` (`ingest -> gather_context -> investigate`) that gathers context on a historical Sentry issue and then asks an LLM to propose ranked root-cause hypotheses. No live webhook, sandboxed fix generation, or PR/Slack integration yet.
 
-What Phase 1 does, given a Sentry issue URL:
+What the pipeline does, given a Sentry issue URL:
 
 - Fetches issue details, the stack trace, and breadcrumbs from Sentry's hosted MCP server (`mcp.sentry.dev`)
 - Maps the issue's Sentry project to a GitHub repo and resolves an approximate release commit SHA
 - Clones the repo locally and, for each stack frame, pulls the source snippet, line-level blame, and recent commit history
+- Hands that gathered context to an LLM (provider-agnostic via `langchain`'s `init_chat_model` — swap `LLM_PROVIDER`/`LLM_MODEL` in `.env`, no code change needed), which may read a few more files from the same local clone, then proposes one or more ranked root-cause hypotheses
 - Prints a human-readable report (and optionally dumps JSON) so the output can be checked against what Sentry's own UI shows for the same issue
 
 Roadmap for the remaining phases:
 
 1. ~~Ingest + gather context~~ (done)
-2. Hypothesize + investigate (LLM tool-use loop over the gathered context)
+2. ~~Hypothesize + investigate (LLM tool-use loop over the gathered context)~~ (done)
 3. Generate fix + test fix (sandboxed Docker test runs, bounded retries)
 4. Decision gate + comment-only + Slack notification (suggest-only path ships first)
 5. Open PR, gated behind manual approval
@@ -33,6 +34,7 @@ Roadmap for the remaining phases:
 2. Copy `.env.example` to `.env` and fill in:
    - `GITHUB_TOKEN` — a GitHub token with read access to the target repos
    - `GITHUB_REPO_MAP_JSON` — maps Sentry project slugs to `"owner/repo"`, e.g. `{"backend-api":"myorg/backend-api"}`
+   - `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` — which LLM the investigate step uses; any provider `langchain` has an integration package for (defaults to Anthropic)
 3. No Sentry credentials to configure up front — the first run triggers a one-time interactive OAuth authorization (see below).
 
 ## Usage
@@ -63,9 +65,11 @@ uv run ruff check src tests # lint
 src/bugops/
   config.py           # settings (env vars)
   state.py             # BugOpsState — the full graph state schema (only a subset populated so far)
+  graph.py              # StateGraph wiring ingest -> gather_context -> investigate (Phase 2)
   nodes/
     ingest.py           # Sentry issue -> initial state (Phase 1)
     gather_context.py   # stack trace, blame, commits, source (Phase 1)
+    investigate.py       # LLM hypothesize/investigate tool-use loop (Phase 2)
   clients/
     sentry_mcp.py        # Sentry hosted MCP client (OAuth)
     github_client.py     # GitHub REST (PyGithub)
@@ -74,9 +78,10 @@ src/bugops/
   models/
     sentry.py              # Sentry-related data models
     context.py              # gathered-context data models
+    hypothesis.py            # structured LLM output schema (Phase 2)
   scripts/
-    run_pipeline.py          # CLI harness for Phase 1
-tests/unit/                    # unit tests with fake client stubs (no network)
+    run_pipeline.py          # CLI harness that builds and runs the graph
+tests/unit/                    # unit tests with fake client/model stubs (no network)
 ```
 
 This README is kept up to date as the app changes — new phases, new modules, or a changed setup step should be reflected here alongside the code that introduces them.
