@@ -1,4 +1,5 @@
 import pytest
+from slack_sdk.errors import SlackApiError
 
 from bugops.models.sentry import SentryIssueSummary
 from bugops.nodes import notify_slack
@@ -160,4 +161,15 @@ async def test_unset_channel_skips_and_returns_empty():
     result = await notify_slack.run(_state(), settings, client)
 
     assert client.calls == []
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_slack_api_error_is_caught_not_raised():
+    class FailingSlackClient:
+        def post_message(self, channel, text):
+            raise SlackApiError("not_in_channel", {"ok": False, "error": "not_in_channel"})
+
+    result = await notify_slack.run(_state(), FakeSettings(), FailingSlackClient())
+
     assert result == {}

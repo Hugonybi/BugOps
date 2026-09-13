@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+from slack_sdk.errors import SlackApiError
+
 from bugops.clients.slack_client import SlackClient
 from bugops.config import Settings
 from bugops.logging import get_logger
@@ -52,7 +54,11 @@ def _run_sync(state: BugOpsState, settings: Settings, slack_client: SlackClient 
         return {}
 
     message = _build_message(state)
-    ts = slack_client.post_message(settings.slack_default_channel, message)
+    try:
+        ts = slack_client.post_message(settings.slack_default_channel, message)
+    except SlackApiError as exc:
+        logger.warning("notify_slack_post_failed", error=str(exc))
+        return {}
     return {"slack_thread_ts": ts} if ts else {}
 
 
