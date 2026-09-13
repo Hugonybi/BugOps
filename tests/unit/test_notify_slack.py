@@ -60,21 +60,48 @@ async def test_passing_fix_posts_message_with_issue_and_diff():
 
 
 @pytest.mark.asyncio
-async def test_auto_pr_route_mentions_phase_5():
+async def test_suggest_pr_route_with_pr_url_mentions_the_pr_link():
     client = FakeSlackClient()
 
-    await notify_slack.run(_state(route_decision="auto_pr"), FakeSettings(), client)
+    await notify_slack.run(
+        _state(route_decision="suggest_pr", pr_url="https://github.com/myorg/backend-api/pull/42"),
+        FakeSettings(),
+        client,
+    )
 
-    assert "Phase 5" in client.calls[0][1]
+    assert "https://github.com/myorg/backend-api/pull/42" in client.calls[0][1]
 
 
 @pytest.mark.asyncio
-async def test_comment_only_route_does_not_mention_phase_5():
+async def test_suggest_pr_route_declined_mentions_declined():
+    client = FakeSlackClient()
+
+    await notify_slack.run(
+        _state(route_decision="suggest_pr", errors=["open_pr_declined"]), FakeSettings(), client
+    )
+
+    assert "declined" in client.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_suggest_pr_route_failed_mentions_failure():
+    client = FakeSlackClient()
+
+    await notify_slack.run(
+        _state(route_decision="suggest_pr", errors=["open_pr_push_failed: auth failed"]), FakeSettings(), client
+    )
+
+    assert "failed" in client.calls[0][1]
+    assert "auth failed" in client.calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_comment_only_route_does_not_mention_pr():
     client = FakeSlackClient()
 
     await notify_slack.run(_state(route_decision="comment_only"), FakeSettings(), client)
 
-    assert "Phase 5" not in client.calls[0][1]
+    assert "PR" not in client.calls[0][1]
 
 
 @pytest.mark.asyncio

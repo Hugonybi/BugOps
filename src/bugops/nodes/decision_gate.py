@@ -35,7 +35,7 @@ def _risk_category(*, passed: bool, drop_reason: str | None, files_touched: int,
 
 def _route_decision(*, confidence: float, risk_category: str, settings: Settings) -> str:
     if risk_category == "low" and confidence >= settings.decision_confidence_floor:
-        return "auto_pr"
+        return "suggest_pr"
     return "comment_only"
 
 

@@ -111,6 +111,11 @@ def _render(state: BugOpsState) -> None:
             f"\n[bold]decision_gate:[/bold] confidence={state.get('confidence'):.2f}  "
             f"risk={state.get('risk_category')}  route={state.get('route_decision')}"
         )
+    if state.get("pr_url"):
+        console.print(f"[bold]PR:[/bold] {state['pr_url']}")
+    elif state.get("route_decision") == "suggest_pr":
+        reason = next((e for e in state.get("errors", []) if e.startswith("open_pr_")), "declined or skipped")
+        console.print(f"[dim]PR: not opened ({reason})[/dim]")
     if state.get("slack_thread_ts"):
         console.print(f"[bold]slack:[/bold] posted (ts={state['slack_thread_ts']})")
     elif state.get("route_decision"):
@@ -127,6 +132,8 @@ async def _main(args: argparse.Namespace) -> None:
         client_name=settings.sentry_oauth_client_name,
     )
     gh = GitHubClient(settings.github_token.get_secret_value())
+    if args.yes:
+        settings.pr_auto_approve = True
 
     graph = build_graph(settings, mcp, gh)
     state = await graph.ainvoke({"issue_url": args.issue_url, "project_slug_override": args.project_slug})
@@ -143,12 +150,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Run the ingest -> gather_context -> investigate -> generate_fix -> test_fix -> "
-            "decision_gate -> notify_slack graph against a real historical Sentry issue."
+            "decision_gate -> open_pr -> notify_slack graph against a real historical Sentry issue."
         )
     )
     parser.add_argument("--issue-url", required=True, help="e.g. https://my-org.sentry.io/issues/PROJECT-1Z43")
     parser.add_argument("--project-slug", default=None, help="Override if Sentry doesn't return one in structured output")
     parser.add_argument("--json-out", type=Path, default=None)
+    parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip open_pr's interactive approval prompt and open the draft PR automatically when eligible",
+    )
     args = parser.parse_args()
     asyncio.run(_main(args))
 

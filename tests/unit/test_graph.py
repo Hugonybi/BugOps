@@ -7,7 +7,7 @@ from bugops.models.context import BlameEntry, CommitInfo
 from bugops.models.fix import FixOutput
 from bugops.models.hypothesis import HypothesisOutput, InvestigationConclusion
 from bugops.models.sentry import SentryIssueSummary
-from bugops.nodes import gather_context, generate_fix, investigate, test_fix
+from bugops.nodes import gather_context, generate_fix, investigate, open_pr, test_fix
 from bugops.sandbox.docker_runner import SandboxResult
 
 DIFF = (
@@ -52,6 +52,9 @@ class FakeGitHubClient:
     def pr_url_for_commit(self, owner, name, sha):
         return None
 
+    def create_pull_request(self, owner, name, *, title, body, head, base, draft=True):
+        return f"https://github.com/{owner}/{name}/pull/42"
+
 
 class FakeSecret:
     def get_secret_value(self):
@@ -72,6 +75,10 @@ class FakeSettings:
     decision_max_files_for_low_risk = 2
     enable_slack_notify = True
     slack_default_channel = "#bugops"
+    enable_pr_creation = True
+    pr_draft = True
+    pr_branch_prefix = "bugops/"
+    pr_auto_approve = False
 
     def repo_map(self):
         import json
@@ -145,6 +152,7 @@ def stub_local_repo(monkeypatch):
     monkeypatch.setattr(investigate.local_repo, "ensure_clone", lambda *a, **kw: fake_repo)
     monkeypatch.setattr(generate_fix.local_repo, "ensure_clone", lambda *a, **kw: fake_repo)
     monkeypatch.setattr(test_fix.local_repo, "ensure_clone", lambda *a, **kw: fake_repo)
+    monkeypatch.setattr(open_pr.local_repo, "ensure_clone", lambda *a, **kw: fake_repo)
 
     file_contents = {"src/utils/parse.ts": "\n".join(f"line {i}" for i in range(1, 60))}
     monkeypatch.setattr(gather_context.local_repo, "read_file_at", lambda repo, sha, path: file_contents.get(path))
@@ -169,6 +177,13 @@ def stub_local_repo(monkeypatch):
     monkeypatch.setattr(test_fix.worktree, "remove_worktree", lambda repo, dest: None)
     monkeypatch.setattr(test_fix.worktree, "apply_diff", lambda dest, diff: (True, ""))
     monkeypatch.setattr(test_fix, "detect_test_command", lambda dest, override_map, owner, name: ("npm ci", "npm test"))
+
+    monkeypatch.setattr(open_pr.worktree, "create_worktree", lambda repo, sha, dest: dest)
+    monkeypatch.setattr(open_pr.worktree, "remove_worktree", lambda repo, dest: None)
+    monkeypatch.setattr(open_pr.worktree, "apply_diff", lambda dest, diff: (True, ""))
+    monkeypatch.setattr(open_pr.branch_ops, "create_branch", lambda repo, name: None)
+    monkeypatch.setattr(open_pr.branch_ops, "commit_all", lambda repo, message: "deadbeef")
+    monkeypatch.setattr(open_pr.branch_ops, "push_branch", lambda *a, **kw: (True, ""))
 
 
 def _conclusion():
@@ -208,7 +223,15 @@ async def test_graph_runs_ingest_through_investigate():
     docker_runner = FakeDockerRunner()
     slack_client = FakeSlackClient()
 
-    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
+    graph = build_graph(
+        FakeSettings(),
+        mcp,
+        gh,
+        model=model,
+        docker_runner=docker_runner,
+        slack_client=slack_client,
+        approve=lambda state: True,
+    )
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )
@@ -228,7 +251,15 @@ async def test_graph_generates_and_tests_a_passing_fix():
     )
     slack_client = FakeSlackClient()
 
-    graph = build_graph(FakeSettings(), mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
+    graph = build_graph(
+        FakeSettings(),
+        mcp,
+        gh,
+        model=model,
+        docker_runner=docker_runner,
+        slack_client=slack_client,
+        approve=lambda state: True,
+    )
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )
@@ -238,8 +269,10 @@ async def test_graph_generates_and_tests_a_passing_fix():
     assert "drop_reason" not in state
     assert state["confidence"] == 0.7
     assert state["risk_category"] == "low"
-    assert state["route_decision"] in ("auto_pr", "comment_only")
+    assert state["route_decision"] in ("suggest_pr", "comment_only")
     assert state["slack_thread_ts"] == "171234.5678"
+    if state["route_decision"] == "suggest_pr":
+        assert state["pr_url"] == "https://github.com/myorg/backend-api/pull/42"
 
 
 @pytest.mark.asyncio
@@ -257,7 +290,15 @@ async def test_graph_retries_generate_fix_until_max_retries_then_stops():
     )
     slack_client = FakeSlackClient()
 
-    graph = build_graph(settings, mcp, gh, model=model, docker_runner=docker_runner, slack_client=slack_client)
+    graph = build_graph(
+        settings,
+        mcp,
+        gh,
+        model=model,
+        docker_runner=docker_runner,
+        slack_client=slack_client,
+        approve=lambda state: True,
+    )
     state = await graph.ainvoke(
         {"issue_url": "https://my-org.sentry.io/issues/BACKEND-1", "project_slug_override": None}
     )

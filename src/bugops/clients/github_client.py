@@ -42,3 +42,13 @@ class GitHubClient:
             return pulls[0].html_url if pulls.totalCount else None
         except GithubException:
             return None
+
+    def create_pull_request(
+        self, owner: str, name: str, *, title: str, body: str, head: str, base: str, draft: bool = True
+    ) -> str:
+        """Opens a PR from an already-pushed `head` branch. Raises GithubException on failure —
+        unlike pr_url_for_commit's best-effort lookup, open_pr needs to tell "PR creation failed"
+        apart from "no PR exists", which only works if this propagates the error."""
+        repo = self.get_repo(owner, name)
+        pr = repo.create_pull(title=title, body=body, head=head, base=base, draft=draft)
+        return pr.html_url

@@ -51,12 +51,12 @@ def _state(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_low_risk_high_confidence_routes_auto_pr():
+async def test_low_risk_high_confidence_routes_suggest_pr():
     result = await decision_gate.run(_state(), FakeSettings())
 
     assert result["confidence"] == 0.9
     assert result["risk_category"] == "low"
-    assert result["route_decision"] == "auto_pr"
+    assert result["route_decision"] == "suggest_pr"
 
 
 @pytest.mark.asyncio

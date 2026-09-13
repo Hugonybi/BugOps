@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     decision_confidence_floor: float = 0.75
     """Minimum decision_gate `confidence` (from the top hypothesis) required for route_decision
-    to ever be "auto_pr" — below this it is always "comment_only"."""
+    to ever be "suggest_pr" — below this it is always "comment_only"."""
 
     decision_max_files_for_low_risk: int = 2
     """A diff touching more files than this bumps risk_category above "low" even with high
@@ -67,6 +67,23 @@ class Settings(BaseSettings):
 
     slack_bot_token: SecretStr | None = None
     slack_default_channel: str | None = None
+
+    enable_pr_creation: bool = True
+    """Feature flag to skip open_pr's git-push + GitHub API call entirely (e.g. a read-only
+    GITHUB_TOKEN, or a repo you don't want touched yet). When False, open_pr always returns
+    {} without prompting, exactly like enable_slack_notify does for notify_slack."""
+
+    pr_draft: bool = True
+    """Whether PRs open_pr opens are GitHub drafts. Phase 5 is gated behind manual approval,
+    not ready-for-review, so drafts are the safer default."""
+
+    pr_branch_prefix: str = "bugops/"
+    """Prefix for the branch open_pr creates, e.g. bugops/backend-1-<random>."""
+
+    pr_auto_approve: bool = False
+    """Skips open_pr's interactive Confirm.ask prompt and treats every suggest_pr route as
+    approved. Off by default so a run never opens a PR without a human saying so; run_pipeline.py
+    exposes --yes to flip this per-invocation without editing .env."""
 
     def repo_map(self) -> dict[str, str]:
         import json

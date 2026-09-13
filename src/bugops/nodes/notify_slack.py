@@ -29,8 +29,17 @@ def _build_message(state: BugOpsState) -> str:
         confidence = state.get("confidence")
         risk = state.get("risk_category")
         decision_line = f"confidence: {confidence:.2f}   risk: {risk}   route: {route}"
-        if route == "auto_pr":
-            decision_line += "  _(would open a PR once Phase 5 ships)_"
+        if route == "suggest_pr":
+            pr_url = state.get("pr_url")
+            pr_errors = [e for e in state.get("errors", []) if e.startswith("open_pr_")]
+            if pr_url:
+                decision_line += f"\n:rocket: opened draft PR: {pr_url}"
+            elif "open_pr_declined" in pr_errors:
+                decision_line += "\n_(PR not opened — declined during manual approval)_"
+            elif pr_errors:
+                decision_line += f"\n:warning: PR creation failed: `{pr_errors[0]}`"
+            else:
+                decision_line += "  _(PR creation disabled)_"
         diff_block = f"\n```diff\n{state.get('current_diff', '')}\n```"
         body = f":white_check_mark: *Suggested fix.*\n{decision_line}{diff_block}"
 

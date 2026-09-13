@@ -60,7 +60,7 @@ class BugOpsState(TypedDict, total=False):
     # --- decision_gate (phase 4) ---
     confidence: float | None
     risk_category: Literal["low", "medium", "high"] | None
-    route_decision: Literal["auto_pr", "comment_only"] | None
+    route_decision: Literal["suggest_pr", "comment_only"] | None
 
     # --- open_pr / notify_slack (phase 4-5) ---
     pr_url: str | None
