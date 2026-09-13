@@ -39,3 +39,6 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = ["docker: requires a local Docker daemon (run explicitly with -m docker)"]
+addopts = "-m 'not docker'"

@@ -90,6 +90,22 @@ def _render(state: BugOpsState) -> None:
             )
         )
 
+    if state.get("current_diff"):
+        console.print(Panel(state["current_diff"], title="Proposed Fix (current_diff)"))
+
+    for i, attempt in enumerate(state.get("test_attempts", []), start=1):
+        status = "[green]PASSED[/green]" if attempt["passed"] else "[red]FAILED[/red]"
+        console.print(
+            Panel(
+                f"command: {attempt['command']}\nduration: {attempt['duration_s']:.1f}s\n"
+                f"stdout (tail):\n{attempt['stdout_tail']}\nstderr (tail):\n{attempt['stderr_tail']}",
+                title=f"Test Attempt {i} — {status}",
+            )
+        )
+
+    if state.get("drop_reason"):
+        console.print(f"\n[yellow]drop_reason: {state['drop_reason']}[/yellow]")
+
 
 async def _main(args: argparse.Namespace) -> None:
     configure_logging()
@@ -115,7 +131,10 @@ async def _main(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run the ingest -> gather_context -> investigate graph against a real historical Sentry issue."
+        description=(
+            "Run the ingest -> gather_context -> investigate -> generate_fix -> test_fix graph "
+            "against a real historical Sentry issue."
+        )
     )
     parser.add_argument("--issue-url", required=True, help="e.g. https://my-org.sentry.io/issues/PROJECT-1Z43")
     parser.add_argument("--project-slug", default=None, help="Override if Sentry doesn't return one in structured output")

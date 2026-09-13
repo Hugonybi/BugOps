@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
 
 from bugops.config import Settings
 from bugops.git import local_repo
 from bugops.logging import get_logger
 from bugops.models.hypothesis import InvestigationConclusion
+from bugops.nodes.tools import build_context_message, make_read_file_tool
 from bugops.state import BugOpsState, Hypothesis
 
 logger = get_logger(__name__)
@@ -19,44 +19,15 @@ util, a config file) not already provided, if that would sharpen your hypothesis
 have enough evidence, stop calling tools and give your final hypotheses."""
 
 
-def _build_context_message(state: BugOpsState) -> str:
-    issue = state["issue"]
-    parts = [
-        f"## Issue\n{issue.title}\nculprit: {issue.culprit}\nplatform: {issue.platform}",
-        f"## Stack Trace\n{state.get('stack_trace_markdown') or '(none)'}",
-        f"## Breadcrumbs\n{state.get('breadcrumbs_markdown') or '(none)'}",
-    ]
-    for path, content in state.get("source_files", {}).items():
-        parts.append(f"## Source: {path}\n```\n{content}\n```")
-        for b in state.get("blame", {}).get(path, []):
-            parts.append(f"blame {path}:{b.line_no} — {b.commit_sha[:8]} {b.author} {b.summary}")
-        for c in state.get("related_commits", {}).get(path, []):
-            parts.append(f"commit {c.sha[:8]} {c.author} {c.message} {c.pr_url or ''}")
-    return "\n\n".join(parts)
-
-
-def _make_read_file_tool(repo, sha: str):
-    @tool
-    def read_source_file(path: str) -> str:
-        """Read a file from the repo at the investigated commit, by repo-relative path,
-        for files not already included in the gathered context."""
-        content = local_repo.read_file_at(repo, sha, path)
-        if content is None:
-            return f"ERROR: {path!r} not found at {sha}"
-        return content
-
-    return read_source_file
-
-
 async def run(state: BugOpsState, settings: Settings, model: BaseChatModel) -> BugOpsState:
     repo = state["repo"]
     local = local_repo.ensure_clone(
         settings.git_cache_dir, repo["owner"], repo["name"], settings.github_token.get_secret_value()
     )
-    read_tool = _make_read_file_tool(local, state["release_sha"])
+    read_tool = make_read_file_tool(local, state["release_sha"])
     bound_model = model.bind_tools([read_tool])
 
-    messages: list = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=_build_context_message(state))]
+    messages: list = [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=build_context_message(state))]
     tool_calls_made: list[dict] = []
     round_no = 0
 
